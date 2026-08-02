@@ -148,7 +148,8 @@ static void drwl_rect(Drwl* drwl, int x, int y, unsigned int w, unsigned int h, 
 			(pixman_rectangle16_t[4]){{x, y, w, 1}, {x, y + h - 1, w, 1}, {x, y, 1, h}, {x + w - 1, y, 1, h}});
 }
 
-static int drwl_text(Drwl* drwl, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char* text, int invert) {
+static int drwl_text(Drwl* drwl, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, unsigned int bpad,
+					 const char* text, int invert) {
 	int ty;
 	int render = x || y || w || h;
 	long x_kern;
@@ -170,6 +171,8 @@ static int drwl_text(Drwl* drwl, int x, int y, unsigned int w, unsigned int h, u
 
 		drwl_rect(drwl, x, y, w, h, 1, !invert);
 
+		y += bpad;
+		h -= bpad;
 		x += lpad;
 		w -= lpad;
 	}
@@ -202,7 +205,7 @@ static int drwl_text(Drwl* drwl, int x, int y, unsigned int w, unsigned int h, u
 
 		if (render && !noellipsis && x_kern + glyph->advance.x + eg->advance.x > w && *(p + 1) != '\0') {
 			/* cannot fit ellipsis after current codepoint */
-			if (drwl_text(drwl, 0, 0, 0, 0, 0, pp, 0) + x_kern <= w) {
+			if (drwl_text(drwl, 0, 0, 0, 0, 0, 0, pp, 0) + x_kern <= w) {
 				noellipsis = 1;
 			} else {
 				w -= eg->advance.x;
@@ -237,7 +240,7 @@ static int drwl_text(Drwl* drwl, int x, int y, unsigned int w, unsigned int h, u
 static unsigned int drwl_font_getwidth(Drwl* drwl, const char* text) {
 	if (!drwl || !drwl->font || !text)
 		return 0;
-	return drwl_text(drwl, 0, 0, 0, 0, 0, text, 0);
+	return drwl_text(drwl, 0, 0, 0, 0, 0, 0, text, 0);
 }
 
 static void drwl_image_destroy(Img* image) { pixman_image_unref(image); }

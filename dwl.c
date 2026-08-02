@@ -70,6 +70,7 @@
 #include <xcb/xcb_icccm.h>
 #endif
 
+#include "custom.h"
 #include "dbus.h"
 #include "drwl.h"
 #include "systray/tray.h"
@@ -93,7 +94,6 @@
 #define TEXTW(mon, text) (drwl_font_getwidth(mon->drw, text) + mon->lrpad)
 
 /* enums */
-enum { SchemeNorm, SchemeSel, SchemeUrg };													   /* color schemes */
 enum { CurNormal, CurPressed, CurMove, CurResize };											   /* cursor */
 enum { XDGShell, LayerShell, X11 };															   /* client types */
 enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
@@ -107,6 +107,7 @@ typedef union {
 	uint32_t ui;
 	float f;
 	const void* v;
+	const char* proc_name;
 } Arg;
 
 typedef struct {
@@ -153,7 +154,7 @@ typedef struct {
 #endif
 	unsigned int bw;
 	uint32_t tags;
-	int isfloating, isurgent, isfullscreen;
+	int isfloating, isurgent, isselected, isfullscreen;
 	uint32_t resize; /* configure serial of a pending resize */
 } Client;
 
@@ -381,8 +382,6 @@ static void togglefloating(const Arg* arg);
 static void togglefullscreen(const Arg* arg);
 static void toggletag(const Arg* arg);
 static void toggleview(const Arg* arg);
-static void trayactivate(const Arg* arg);
-static void traymenu(const Arg* arg);
 static void traynotify(void* data);
 static void unlocksession(struct wl_listener* listener, void* data);
 static void unmaplayersurfacenotify(struct wl_listener* listener, void* data);
@@ -397,6 +396,10 @@ static void virtualpointer(struct wl_listener* listener, void* data);
 static Monitor* xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface** psurface, Client** pc, LayerSurface** pl, double* nx, double* ny);
 static void zoom(const Arg* arg);
+
+/* Custom */
+static void redraw_all(void);
+void tagandview(const Arg* arg);
 
 /* variables */
 static const char broken[] = "broken";
@@ -1429,10 +1432,9 @@ Monitor* dirtomon(enum wlr_direction dir) {
 }
 
 void drawbar(Monitor* m) {
-	int traywidth = 0;
 	int x, w, tw = 0;
 	int boxs = m->drw->font->height / 9;
-	int boxw = m->drw->font->height / 6 + 2;
+	int boxw = m->drw->font->height / 7;
 	uint32_t i, occ = 0, urg = 0;
 	Client* c;
 	Buffer* buf;
@@ -1442,14 +1444,25 @@ void drawbar(Monitor* m) {
 	if (!(buf = bufmon(m)))
 		return;
 
-	traywidth = tray_get_width(m->tray);
+	sysinfo_t sysinfo = get_system_info();
 
-	/* draw status first so it can be overdrawn by tags later */
-	if (m == selmon) { /* status is only drawn on selected monitor */
-		drwl_setscheme(m->drw, colors[SchemeNorm]);
-		tw = TEXTW(m, stext) - m->lrpad + 2; /* 2px right padding */
-		drwl_text(m->drw, m->b.width - (tw + traywidth), 0, tw, m->b.height, 0, stext, 0);
-	}
+	char cstext[256];
+	const char* battery_icon = (sysinfo.is_bat_charging ? "󰂄" : "󰁽");
+	const char* net_icon = (sysinfo.is_internet_connected ? (sysinfo.is_internet_wireless ? "" : "") : "󱘖");
+	const char* net_name = ((sysinfo.is_internet_connected && sysinfo.is_internet_wireless) ? sysinfo.wifi_ssid : "");
+	const char* vol_icon =
+		((!sysinfo.is_audio_muted && sysinfo.volume_pct > 0) ? (sysinfo.volume_pct < 50 ? "" : "") : "");
+
+	snprintf(cstext, sizeof(cstext),
+			 "[ 󰍛 %d%%  %d°C  %d%% ] [ 󱩒 %d%% %s  %d%% %s] "
+			 "[ %s  %s %s %d%% ]",
+			 sysinfo.cpu_load, sysinfo.cpu_temp, sysinfo.mem_usage, sysinfo.backlight_pct, vol_icon, sysinfo.volume_pct,
+			 sysinfo.audio_sink_name, net_icon, net_name, battery_icon, sysinfo.bat_pct);
+
+	// draw status
+	drwl_setscheme(m->drw, colors[SchemeNorm]);
+	tw = TEXTW(m, cstext) - m->lrpad + 2; /* 2px right padding */
+	drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, 0, cstext, 0);
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon != m)
@@ -1463,31 +1476,35 @@ void drawbar(Monitor* m) {
 	for (i = 0; i < LENGTH(tags); i++) {
 		w = TEXTW(m, tags[i]);
 		drwl_setscheme(m->drw, colors[m->tagset[m->seltags] & 1 << i ? SchemeSel : SchemeNorm]);
-		drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, tags[i], urg & 1 << i);
+		drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, -2, tags[i], urg & 1 << i);
 		if (occ & 1 << i)
-			drwl_rect(m->drw, x + boxs, boxs, boxw, boxw, m == selmon && c && c->tags & 1 << i, urg & 1 << i);
+			drwl_rect(m->drw, x + 5, m->b.height - 3, w - 10, 2, 1, urg & 1 << i);
+		// TODO This is where occupied is drawn
 		x += w;
 	}
-	w = TEXTW(m, m->ltsymbol);
+	// w = TEXTW(m, m->ltsymbol);
+	// drwl_setscheme(m->drw, colors[SchemeNorm]);
+	// x = drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, 0, m->ltsymbol, 0);
+
+	if ((w = m->b.width - (tw + x)) > m->b.height) {
+		drwl_setscheme(m->drw, colors[SchemeNorm]);
+		drwl_rect(m->drw, x, 0, w, m->b.height, 1, 1);
+	}
+
+	// if (traywidth > 0) {
+	// 	pixman_image_composite32(PIXMAN_OP_SRC, m->tray->image, NULL, m->drw->image, 0, 0, 0, 0, m->b.width - traywidth, 0,
+	// 							 traywidth, m->b.height);
+	// }
+
+	/*draw clock (this updates correctly only because sysinfo updates every 5s!)*/
+	char clock_str[64];
+	time_t t = time(NULL);
+	struct tm* tm = localtime(&t);
+	strftime(clock_str, sizeof(clock_str), "󰃮 %A %d-%m-%Y  %H-%M", tm);
+
 	drwl_setscheme(m->drw, colors[SchemeNorm]);
-	x = drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, m->ltsymbol, 0);
-
-	if ((w = m->b.width - (tw + x + traywidth)) > m->b.height) {
-		if (c) {
-			drwl_setscheme(m->drw, colors[m == selmon ? SchemeSel : SchemeNorm]);
-			drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, client_get_title(c), 0);
-			if (c && c->isfloating)
-				drwl_rect(m->drw, x + boxs, boxs, boxw, boxw, 0, 0);
-		} else {
-			drwl_setscheme(m->drw, colors[SchemeNorm]);
-			drwl_rect(m->drw, x, 0, w, m->b.height, 1, 1);
-		}
-	}
-
-	if (traywidth > 0) {
-		pixman_image_composite32(PIXMAN_OP_SRC, m->tray->image, NULL, m->drw->image, 0, 0, 0, 0, m->b.width - traywidth, 0,
-								 traywidth, m->b.height);
-	}
+	tw = TEXTW(m, clock_str) - m->lrpad + 2; /* 2px right padding */
+	drwl_text(m->drw, (m->b.width - tw) / 2, 0, tw, m->b.height, 0, 0, clock_str, 0);
 
 	wlr_scene_buffer_set_dest_size(m->scene_buffer, m->b.real_width, m->b.real_height);
 	wlr_scene_node_set_position(&m->scene_buffer->node, m->m.x, m->m.y + (topbar ? 0 : m->m.height - m->b.real_height));
@@ -1500,10 +1517,6 @@ void traynotify(void* data) {
 
 	drawbar(m);
 }
-
-void trayactivate(const Arg* arg) { tray_leftclicked(selmon->tray, arg->ui); }
-
-void traymenu(const Arg* arg) { tray_rightclicked(selmon->tray, arg->ui, dmenucmd); }
 
 void drawbars(void) {
 	Monitor* m = NULL;
@@ -1538,6 +1551,7 @@ void focusclient(Client* c, int lift) {
 		wl_list_insert(&fstack, &c->flink);
 		selmon = c->mon;
 		c->isurgent = 0;
+		c->isselected = 1;
 		client_restack_surface(c);
 
 		/* Don't change border color if there is an exclusive focus or we are
@@ -1559,6 +1573,7 @@ void focusclient(Client* c, int lift) {
 			/* Don't deactivate old client if the new one wants focus, as this causes issues with winecfg
 			 * and probably other clients */
 		} else if (old_c && !client_is_unmanaged(old_c) && (!c || !client_wants_focus(c))) {
+			old_c->isselected = 0;
 			client_set_border_color(old_c, (float[])COLOR(colors[SchemeNorm][ColBorder]));
 			client_activate_surface(old, 0);
 		}
@@ -1716,7 +1731,14 @@ int keybinding(uint32_t mods, xkb_keysym_t sym) {
 	const Key* k;
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod) && sym == k->keysym && k->func) {
-			k->func(&k->arg);
+			if (k->func == spawn) {
+				const void* v = get_proc_arg(k->arg.proc_name);
+				if (!v)
+					return 1;
+				Arg a = {.v = v};
+				spawn(&a);
+			} else
+				k->func(&k->arg);
 			return 1;
 		}
 	}
@@ -2638,6 +2660,10 @@ void setup(void) {
 	if (showbar && showsystray)
 		watcher_start(&watcher, bus_conn, event_loop);
 
+	/* Custom */
+	system_info_init_event_loop(5000, wl_display_get_event_loop(dpy), drawbars);
+	config_init_event_loop(wl_display_get_event_loop(dpy), redraw_all);
+
 	/* Make sure XWayland clients don't connect to the parent X server,
 	 * e.g when running in the x11 backend or the wayland backend and the
 	 * compositor has Xwayland support */
@@ -3246,4 +3272,28 @@ int main(int argc, char* argv[]) {
 
 usage:
 	die("Usage: %s [-v] [-d] [-s startup command]", argv[0]);
+}
+
+void redraw_all(void) {
+	Monitor* m = NULL;
+	Client* c = NULL;
+	wl_list_for_each(c, &clients, link) {
+		if (c->isurgent)
+			client_set_border_color(c, (float[])COLOR(colors[SchemeUrg][ColBorder]));
+		else if (c->isselected)
+			client_set_border_color(c, (float[])COLOR(colors[SchemeSel][ColBorder]));
+		else
+			client_set_border_color(c, (float[])COLOR(colors[SchemeNorm][ColBorder]));
+	}
+	wl_list_for_each(m, &mons, link) {
+		updatebar(m);
+		wlr_output_schedule_frame(m->wlr_output);
+	}
+
+	drawbars();
+}
+
+void tagandview(const Arg* arg) {
+	tag(arg);
+	view(arg);
 }
