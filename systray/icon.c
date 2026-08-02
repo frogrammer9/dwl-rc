@@ -14,10 +14,8 @@
  * Converts pixels from uint8_t[4] to uint32_t and
  * straight alpha to premultiplied alpha.
  */
-static uint32_t *
-to_pixman(const uint8_t *src, int n_pixels, size_t *pix_size)
-{
-	uint32_t *dest = NULL;
+static uint32_t* to_pixman(const uint8_t* src, int n_pixels, size_t* pix_size) {
+	uint32_t* dest = NULL;
 
 	*pix_size = n_pixels * sizeof(uint32_t);
 	dest = malloc(*pix_size);
@@ -38,30 +36,25 @@ to_pixman(const uint8_t *src, int n_pixels, size_t *pix_size)
 			dest[i] = 0;
 
 		} else if (a == 255) {
-			dest[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) |
-			          ((uint32_t)g << 8) | ((uint32_t)b);
+			dest[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | ((uint32_t)b);
 
 		} else {
-			dest[i] = ((uint32_t)a << 24) |
-			          ((uint32_t)PREMUL_ALPHA(r, a) << 16) |
-			          ((uint32_t)PREMUL_ALPHA(g, a) << 8) |
-			          ((uint32_t)PREMUL_ALPHA(b, a));
+			dest[i] = ((uint32_t)a << 24) | ((uint32_t)PREMUL_ALPHA(r, a) << 16) | ((uint32_t)PREMUL_ALPHA(g, a) << 8) |
+					  ((uint32_t)PREMUL_ALPHA(b, a));
 		}
 	}
 
 	return dest;
 }
 
-Icon *
-createicon(const uint8_t *buf, int width, int height, int size)
-{
-	Icon *icon = NULL;
+Icon* createicon(const uint8_t* buf, int width, int height, int size) {
+	Icon* icon = NULL;
 
 	int n_pixels;
-	pixman_image_t *img = NULL;
+	pixman_image_t* img = NULL;
 	size_t pixbuf_size;
-	uint32_t *buf_pixman = NULL;
-	uint8_t *buf_orig = NULL;
+	uint32_t* buf_pixman = NULL;
+	uint8_t* buf_orig = NULL;
 
 	n_pixels = size / 4;
 
@@ -71,8 +64,7 @@ createicon(const uint8_t *buf, int width, int height, int size)
 	if (!icon || !buf_orig || !buf_pixman)
 		goto fail;
 
-	img = pixman_image_create_bits(PIXMAN_a8r8g8b8, width, height,
-	                               buf_pixman, width * 4);
+	img = pixman_image_create_bits(PIXMAN_a8r8g8b8, width, height, buf_pixman, width * 4);
 	if (!img)
 		goto fail;
 
@@ -95,9 +87,7 @@ fail:
 	return NULL;
 }
 
-void
-destroyicon(Icon *icon)
-{
+void destroyicon(Icon* icon) {
 	if (icon->img)
 		pixman_image_unref(icon->img);
 	free(icon->buf_orig);
@@ -105,10 +95,8 @@ destroyicon(Icon *icon)
 	free(icon);
 }
 
-FallbackIcon *
-createfallbackicon(const char *appname, int fgcolor, struct fcft_font *font)
-{
-	const struct fcft_glyph *glyph;
+FallbackIcon* createfallbackicon(const char* appname, int fgcolor, struct fcft_font* font) {
+	const struct fcft_glyph* glyph;
 	char initial;
 
 	if ((unsigned char)appname[0] > 127) {
@@ -125,9 +113,7 @@ createfallbackicon(const char *appname, int fgcolor, struct fcft_font *font)
 	return glyph;
 }
 
-int
-resize_image(pixman_image_t *image, int new_width, int new_height)
-{
+int resize_image(pixman_image_t* image, int new_width, int new_height) {
 	int src_width = pixman_image_get_width(image);
 	int src_height = pixman_image_get_height(image);
 	pixman_transform_t transform;
@@ -140,8 +126,7 @@ resize_image(pixman_image_t *image, int new_width, int new_height)
 	scale_y = pixman_double_to_fixed((double)src_height / new_height);
 
 	pixman_transform_init_scale(&transform, scale_x, scale_y);
-	if (!pixman_image_set_filter(image, PIXMAN_FILTER_BEST, NULL, 0) ||
-	    !pixman_image_set_transform(image, &transform)) {
+	if (!pixman_image_set_filter(image, PIXMAN_FILTER_BEST, NULL, 0) || !pixman_image_set_transform(image, &transform)) {
 		return -1;
 	}
 

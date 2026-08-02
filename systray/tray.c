@@ -14,43 +14,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define PIXMAN_COLOR(hex)                        \
-	{ .red = ((hex >> 24) & 0xff) * 0x101,   \
-	  .green = ((hex >> 16) & 0xff) * 0x101, \
-	  .blue = ((hex >> 8) & 0xff) * 0x101,   \
-	  .alpha = (hex & 0xff) * 0x101 }
+#define PIXMAN_COLOR(hex)                                                                                                        \
+	{.red = ((hex >> 24) & 0xff) * 0x101,                                                                                        \
+	 .green = ((hex >> 16) & 0xff) * 0x101,                                                                                      \
+	 .blue = ((hex >> 8) & 0xff) * 0x101,                                                                                        \
+	 .alpha = (hex & 0xff) * 0x101}
 
-static Watcher *
-tray_get_watcher(const Tray *tray)
-{
+static Watcher* tray_get_watcher(const Tray* tray) {
 	if (!tray)
 		return NULL;
 
 	return tray->watcher;
 }
 
-static pixman_image_t *
-createcanvas(int width, int height, int bgcolor)
-{
+static pixman_image_t* createcanvas(int width, int height, int bgcolor) {
 	pixman_image_t *src, *dest;
 	pixman_color_t bgcolor_pix = PIXMAN_COLOR(bgcolor);
 
-	dest = pixman_image_create_bits(PIXMAN_a8r8g8b8, width, height, NULL,
-	                                0);
+	dest = pixman_image_create_bits(PIXMAN_a8r8g8b8, width, height, NULL, 0);
 	src = pixman_image_create_solid_fill(&bgcolor_pix);
 
-	pixman_image_composite32(PIXMAN_OP_SRC, src, NULL, dest, 0, 0, 0, 0, 0,
-	                         0, width, height);
+	pixman_image_composite32(PIXMAN_OP_SRC, src, NULL, dest, 0, 0, 0, 0, 0, 0, width, height);
 
 	pixman_image_unref(src);
 	return dest;
 }
 
-void
-tray_update(Tray *tray)
-{
-	Item *item;
-	Watcher *watcher;
+void tray_update(Tray* tray) {
+	Item* item;
+	Watcher* watcher;
 	int icon_size, i = 0, canvas_width, canvas_height, n_items, spacing;
 	pixman_image_t *canvas = NULL, *img;
 
@@ -89,24 +81,19 @@ tray_update(Tray *tray)
 			img = item->icon->img;
 			if (resize_image(img, icon_size, icon_size) < 0)
 				goto fail;
-			pixman_image_composite32(PIXMAN_OP_OVER, img, NULL,
-			                         canvas, 0, 0, 0, 0,
-			                         slot_x_start, 0, canvas_width,
-			                         canvas_height);
+			pixman_image_composite32(PIXMAN_OP_OVER, img, NULL, canvas, 0, 0, 0, 0, slot_x_start, 0, canvas_width, canvas_height);
 
 		} else if (item->appid) {
 			/* Font glyph alpha mask */
-			const struct fcft_glyph *g;
+			const struct fcft_glyph* g;
 			int pen_y, pen_x;
 			pixman_color_t fg_color = PIXMAN_COLOR(tray->scheme[0]);
-			pixman_image_t *fg;
+			pixman_image_t* fg;
 
 			if (item->fallback_icon) {
 				g = item->fallback_icon;
 			} else {
-				g = createfallbackicon(item->appid,
-				                       item->fgcolor,
-				                       tray->font);
+				g = createfallbackicon(item->appid, item->fgcolor, tray->font);
 				if (!g)
 					goto fail;
 				item->fallback_icon = g;
@@ -116,10 +103,7 @@ tray_update(Tray *tray)
 			pen_y = slot_y_start + (slot_y_width - g->height) / 2;
 
 			fg = pixman_image_create_solid_fill(&fg_color);
-			pixman_image_composite32(PIXMAN_OP_OVER, fg, g->pix,
-			                         canvas, 0, 0, 0, 0, pen_x,
-			                         pen_y, canvas_width,
-			                         canvas_height);
+			pixman_image_composite32(PIXMAN_OP_OVER, fg, g->pix, canvas, 0, 0, 0, 0, pen_x, pen_y, canvas_width, canvas_height);
 			pixman_image_unref(fg);
 		}
 		i++;
@@ -138,9 +122,7 @@ fail:
 	return;
 }
 
-void
-destroytray(Tray *tray)
-{
+void destroytray(Tray* tray) {
 	if (tray->image)
 		pixman_image_unref(tray->image);
 	if (tray->font)
@@ -148,14 +130,11 @@ destroytray(Tray *tray)
 	free(tray);
 }
 
-Tray *
-createtray(void *monitor, int height, int spacing, uint32_t *colorscheme,
-           const char **fonts, const char *fontattrs, TrayNotifyCb cb,
-           Watcher *watcher)
-{
-	Tray *tray = NULL;
+Tray* createtray(void* monitor, int height, int spacing, uint32_t* colorscheme, const char** fonts, const char* fontattrs,
+				 TrayNotifyCb cb, Watcher* watcher) {
+	Tray* tray = NULL;
 	char fontattrs_my[128];
-	struct fcft_font *font = NULL;
+	struct fcft_font* font = NULL;
 
 	sprintf(fontattrs_my, "%s:%s", fontattrs, "weight:bold");
 
@@ -181,48 +160,39 @@ fail:
 	return NULL;
 }
 
-int
-tray_get_width(const Tray *tray)
-{
+int tray_get_width(const Tray* tray) {
 	if (tray && tray->image)
 		return pixman_image_get_width(tray->image);
 	else
 		return 0;
 }
 
-int
-tray_get_icon_width(const Tray *tray)
-{
+int tray_get_icon_width(const Tray* tray) {
 	if (!tray)
 		return 0;
 
 	return tray->height;
 }
 
-void
-tray_rightclicked(Tray *tray, unsigned int index, const char **menucmd)
-{
-	Item *item;
-	Watcher *watcher;
+void tray_rightclicked(Tray* tray, unsigned int index, const char** menucmd) {
+	Item* item;
+	Watcher* watcher;
 	unsigned int count = 0;
 
 	watcher = tray_get_watcher(tray);
 
 	wl_list_for_each(item, &watcher->items, link) {
 		if (count == index) {
-			menu_show(watcher->conn, watcher->loop, item->busname,
-			          item->menu_busobj, menucmd);
+			menu_show(watcher->conn, watcher->loop, item->busname, item->menu_busobj, menucmd);
 			return;
 		}
 		count++;
 	}
 }
 
-void
-tray_leftclicked(Tray *tray, unsigned int index)
-{
-	Item *item;
-	Watcher *watcher;
+void tray_leftclicked(Tray* tray, unsigned int index) {
+	Item* item;
+	Watcher* watcher;
 	unsigned int count = 0;
 
 	watcher = tray_get_watcher(tray);

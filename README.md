@@ -1,4 +1,4 @@
-# dwl - dwm for Wayland
+#dwl - dwm for Wayland
 
 Join us on our IRC channel: [#dwl on Libera Chat]  
 Or on our [Discord server].
@@ -70,12 +70,11 @@ run it as a separate window inside either an X11 or Wayland session, as well as
 directly from a VT console. Depending on your distro's setup, you may need to
 add your user to the `video` and `input` groups before you can run dwl on a
 VT. If you are using `elogind` or `systemd-logind` you need to install polkit;
-otherwise you need to add yourself in the `seat` group and enable/start the
-seatd daemon.
+otherwise you need to add yourself in the `seat` group and enable / start the seatd daemon.
 
-When dwl is run with no arguments, it will launch the server and begin handling
-any shortcuts configured in `config.h`. There is no status bar or other
-decoration initially; these are instead clients that can be run within the
+																	When dwl is run with no arguments,
+	it will launch the server and begin handling any shortcuts configured in `config.h`.There is no status bar or
+		other decoration initially; these are instead clients that can be run within the
 Wayland session. Do note that the default background color is black. This can be
 modified in `config.h`.
 
