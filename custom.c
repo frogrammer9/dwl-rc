@@ -423,14 +423,18 @@ static void s_config_set_default(void) {
 }
 
 static void s_update_config(const char* dirpath) {
+	s_config_set_default();
 	char path[128];
 	int pfc = snprintf(path, sizeof(path), "%s/config", dirpath);
 	if (pfc < 0 || pfc >= (int)sizeof(path))
 		die("snprintf failed: path buffer too small");
 	FILE* f = fopen(path, "r");
 	if (!f) {
-		s_config_set_default();
-		return;
+		f = fopen("/etc/dwl-rc/config", "r");
+		if (!f) {
+			s_config_set_default();
+			return;
+		}
 	}
 
 	char* buffer = NULL;

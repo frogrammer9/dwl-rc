@@ -1433,8 +1433,6 @@ Monitor* dirtomon(enum wlr_direction dir) {
 
 void drawbar(Monitor* m) {
 	int x, w, tw = 0;
-	int boxs = m->drw->font->height / 9;
-	int boxw = m->drw->font->height / 7;
 	uint32_t i, occ = 0, urg = 0;
 	Client* c;
 	Buffer* buf;
@@ -1500,7 +1498,7 @@ void drawbar(Monitor* m) {
 	char clock_str[64];
 	time_t t = time(NULL);
 	struct tm* tm = localtime(&t);
-	strftime(clock_str, sizeof(clock_str), "󰃮 %A %d-%m-%Y  %H-%M", tm);
+	strftime(clock_str, sizeof(clock_str), "󰃮 %A %d-%m-%Y  %H:%M", tm);
 
 	drwl_setscheme(m->drw, colors[SchemeNorm]);
 	tw = TEXTW(m, clock_str) - m->lrpad + 2; /* 2px right padding */
