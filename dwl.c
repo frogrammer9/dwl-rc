@@ -1451,11 +1451,29 @@ void drawbar(Monitor* m) {
 	const char* vol_icon =
 		((!sysinfo.is_audio_muted && sysinfo.volume_pct > 0) ? (sysinfo.volume_pct < 50 ? "" : "") : "");
 
-	snprintf(cstext, sizeof(cstext),
-			 "[ 󰍛 %d%%  %d°C  %d%% ] [ 󱩒 %d%% %s  %d%% %s] "
-			 "[ %s  %s %s %d%% ]",
-			 sysinfo.cpu_load, sysinfo.cpu_temp, sysinfo.mem_usage, sysinfo.backlight_pct, vol_icon, sysinfo.volume_pct,
-			 sysinfo.audio_sink_name, net_icon, net_name, battery_icon, sysinfo.bat_pct);
+	char sys_stat_str[32];
+	if (sysinfo.is_temp_sensor)
+		snprintf(sys_stat_str, sizeof(sys_stat_str), "[ 󰍛 %d%%  %d°C  %d%% ]", sysinfo.cpu_load, sysinfo.cpu_temp,
+				 sysinfo.mem_usage);
+	else
+		snprintf(sys_stat_str, sizeof(sys_stat_str), "[ 󰍛 %d%%  %d%% ]", sysinfo.cpu_load, sysinfo.mem_usage);
+	char sys_audio_light_str[64];
+	if (sysinfo.is_backlight)
+		snprintf(sys_audio_light_str, sizeof(sys_audio_light_str), "[ 󱩒 %d%% %s  %d%% %s]", sysinfo.backlight_pct, vol_icon,
+				 sysinfo.volume_pct, sysinfo.audio_sink_name);
+	else
+		snprintf(sys_audio_light_str, sizeof(sys_audio_light_str), "[ %s  %d%% %s]", vol_icon, sysinfo.volume_pct,
+				 sysinfo.audio_sink_name);
+	char sys_net_power_str[64];
+	if (sysinfo.is_bat)
+		snprintf(sys_net_power_str, sizeof(sys_net_power_str), "[ %s  %s %s %d%% ]", net_icon, net_name, battery_icon,
+				 sysinfo.bat_pct);
+	else if (sysinfo.is_internet_wireless)
+		snprintf(sys_net_power_str, sizeof(sys_net_power_str), "[ %s  %s ]", net_icon, net_name);
+	else
+		snprintf(sys_net_power_str, sizeof(sys_net_power_str), "[ %s ]", net_icon);
+
+	snprintf(cstext, sizeof(cstext), "%s %s %s", sys_stat_str, sys_audio_light_str, sys_net_power_str);
 
 	// draw status
 	drwl_setscheme(m->drw, colors[SchemeNorm]);

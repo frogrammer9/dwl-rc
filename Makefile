@@ -19,8 +19,8 @@ LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` -lm $(LIBS)
 TRAYOBJS = systray/watcher.o systray/tray.o systray/item.o systray/icon.o systray/menu.o systray/helpers.o
 TRAYDEPS = systray/watcher.h systray/tray.h systray/item.h systray/icon.h systray/menu.h systray/helpers.h
 
-all: dwl
-dwl: dwl.o util.o dbus.o custom.o $(TRAYOBJS) $(TRAYDEPS)
+all: dwl-rc
+dwl-rc: dwl.o util.o dbus.o custom.o $(TRAYOBJS) $(TRAYDEPS)
 	$(CC) dwl.o util.o dbus.o custom.o $(TRAYOBJS) $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
 dwl.o: dwl.c client.h dbus.h config.h custom.h config.mk cursor-shape-v1-protocol.h \
 	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
@@ -57,30 +57,21 @@ wlr-output-power-management-unstable-v1-protocol.h:
 xdg-shell-protocol.h:
 	$(WAYLAND_SCANNER) server-header \
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
-
-config.h:
-	cp config.def.h $@
 clean:
-	rm -f dwl *.o *-protocol.h systray/*.o
+	rm -f dwl-rc *.o *-protocol.h systray/*.o
 
 dist: clean
-	mkdir -p dwl-$(VERSION)
-	cp -R LICENSE* Makefile CHANGELOG.md README.md client.h config.def.h \
+	mkdir -p dwl-rc-$(VERSION)
+	cp -R LICENSE* Makefile CHANGELOG.md README.md client.h \
 		config.mk protocols dwl.1 dwl.c util.c util.h dwl.desktop \
-		dwl-$(VERSION)
-	tar -caf dwl-$(VERSION).tar.gz dwl-$(VERSION)
-	rm -rf dwl-$(VERSION)
+		dwl-rc-$(VERSION)
+	tar -caf dwl-rc-$(VERSION).tar.gz dwl-$(VERSION)
+	rm -rf dwl-rc-$(VERSION)
 
-install: dwl
+install: dwl-rc
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	cp -f dwl $(DESTDIR)$(PREFIX)/bin
-	chmod 755 $(DESTDIR)$(PREFIX)/bin/dwl
-	mkdir -p $(DESTDIR)$(MANDIR)/man1
-	cp -f dwl.1 $(DESTDIR)$(MANDIR)/man1
-	chmod 644 $(DESTDIR)$(MANDIR)/man1/dwl.1
-	mkdir -p $(DESTDIR)$(DATADIR)/wayland-sessions
-	cp -f dwl.desktop $(DESTDIR)$(DATADIR)/wayland-sessions/dwl.desktop
-	chmod 644 $(DESTDIR)$(DATADIR)/wayland-sessions/dwl.desktop
+	cp -f dwl-rc $(DESTDIR)$(PREFIX)/bin
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/dwl-rc
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/dwl $(DESTDIR)$(MANDIR)/man1/dwl.1 \
 		$(DESTDIR)$(DATADIR)/wayland-sessions/dwl.desktop

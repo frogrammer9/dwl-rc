@@ -6,6 +6,7 @@
 
 typedef struct {
 	int cpu_load;
+	bool is_temp_sensor;
 	int cpu_temp;
 	int mem_usage;
 

@@ -1,0 +1,8 @@
+bemenu_lines: 5
+color_normal: #123123 #f0f0f0 #f0f0f0
+color_selected: #f0f0f0 #123123 #123123
+color_urgent: #ffff00 #00ffff #ff00ff
+bemenu_border: 1
+bemenu_color_border: #ff0000
+bemenu_colors_fg: #123123 #123123 #aaaaaa #123123
+bemenu_colors_bg: #cccccc #bbbbbb #123123 #aaaaaa

@@ -39,11 +39,10 @@ uint32_t colors[3][3];
 static char s_temp_sensor_path[128];
 static void s_init_temp_sensor(void) {
 	DIR* dir = opendir("/sys/class/hwmon");
+	s_sysinfo.is_temp_sensor = false;
 
-	if (!dir) {
-		s_sysinfo.cpu_temp = -1;
+	if (!dir)
 		return;
-	}
 
 	struct dirent* ent;
 	while ((ent = readdir(dir)) != NULL) {
@@ -53,7 +52,6 @@ static void s_init_temp_sensor(void) {
 		int pfc = snprintf(path, sizeof(path), "/sys/class/hwmon/%s/name", ent->d_name);
 		if (pfc < 0 || pfc >= (int)sizeof(path)) {
 			closedir(dir);
-			s_sysinfo.cpu_temp = -1;
 			return;
 		}
 		FILE* name_f = fopen(path, "r");
@@ -67,27 +65,25 @@ static void s_init_temp_sensor(void) {
 			pfc = snprintf(path, sizeof(path), "/sys/class/hwmon/%s/temp1_input", ent->d_name);
 			if (pfc < 0 || pfc >= (int)sizeof(path)) {
 				closedir(dir);
-				s_sysinfo.cpu_temp = -1;
 				return;
 			}
 			// TODO This is stupid, make it better
 			strncpy(s_temp_sensor_path, path, sizeof(s_temp_sensor_path));
 			closedir(dir);
+			s_sysinfo.is_temp_sensor = true;
 			return;
 		}
 	}
 	closedir(dir);
-	s_sysinfo.cpu_temp = -1;
 	return;
 }
 
 static char s_battery_dir_path[128]; // it has / at the end (eg: /sys/class/power_supply/BAT0/)
 static void s_init_battery_path(void) {
 	DIR* dir = opendir("/sys/class/power_supply");
-	if (!dir) {
-		s_sysinfo.is_bat = false;
+	s_sysinfo.is_bat = false;
+	if (!dir)
 		return;
-	}
 
 	struct dirent* ent;
 	while ((ent = readdir(dir)) != NULL) {
@@ -98,14 +94,12 @@ static void s_init_battery_path(void) {
 		int pfc = snprintf(path, sizeof(path), "/sys/class/power_supply/%s/type", ent->d_name);
 		if (pfc < 0 || pfc >= (int)sizeof(path)) {
 			closedir(dir);
-			s_sysinfo.is_bat = false;
 			return;
 		}
 		char val[32];
 		FILE* f = fopen(path, "r");
 		if (!f) {
 			closedir(dir);
-			s_sysinfo.is_bat = false;
 			return;
 		}
 		fgets(val, sizeof(val), f);
@@ -113,27 +107,22 @@ static void s_init_battery_path(void) {
 		if (strncmp(val, "Battery", 7) == 0) {
 			pfc = snprintf(s_battery_dir_path, sizeof(s_battery_dir_path), "/sys/class/power_supply/%s/", ent->d_name);
 			closedir(dir);
-			if (pfc < 0 || pfc >= (int)sizeof(path)) {
-
-				s_sysinfo.is_bat = false;
+			if (pfc < 0 || pfc >= (int)sizeof(path))
 				return;
-			}
 			s_sysinfo.is_bat = true;
 			return;
 		}
 	}
 	closedir(dir);
-	s_sysinfo.is_bat = false;
 	return;
 }
 
-static char s_backlight_dir_path[128]; // It has / at the end;
+static char s_backlight_dir_path[128]; // It has '/' at the end;
 static void s_init_backlight_path(void) {
 	DIR* dir = opendir("/sys/class/backlight");
-	if (!dir) {
-		s_sysinfo.is_backlight = false;
+	s_sysinfo.is_backlight = false;
+	if (!dir)
 		return;
-	}
 
 	struct dirent* ent;
 	int found_prio = 0;
@@ -146,7 +135,6 @@ static void s_init_backlight_path(void) {
 		int pfc = snprintf(path, sizeof(path), "/sys/class/backlight/%s/type", ent->d_name);
 		if (pfc < 0 || pfc >= (int)sizeof(path)) {
 			closedir(dir);
-			s_sysinfo.is_backlight = false;
 			return;
 		}
 
@@ -161,7 +149,6 @@ static void s_init_backlight_path(void) {
 			pfc = snprintf(s_backlight_dir_path, sizeof(s_backlight_dir_path), "/sys/class/backlight/%s/", ent->d_name);
 			if (pfc < 0 || pfc >= (int)sizeof(path)) {
 				closedir(dir);
-				s_sysinfo.is_backlight = false;
 				return;
 			}
 			s_sysinfo.is_backlight = true;
@@ -172,7 +159,6 @@ static void s_init_backlight_path(void) {
 				pfc = snprintf(s_backlight_dir_path, sizeof(s_backlight_dir_path), "/sys/class/backlight/%s/", ent->d_name);
 				if (pfc < 0 || pfc >= (int)sizeof(path)) {
 					closedir(dir);
-					s_sysinfo.is_backlight = false;
 					return;
 				}
 				found_prio = 3;
@@ -182,7 +168,6 @@ static void s_init_backlight_path(void) {
 				pfc = snprintf(s_backlight_dir_path, sizeof(s_backlight_dir_path), "/sys/class/backlight/%s/", ent->d_name);
 				if (pfc < 0 || pfc >= (int)sizeof(path)) {
 					closedir(dir);
-					s_sysinfo.is_backlight = false;
 					return;
 				}
 				found_prio = 2;
@@ -192,7 +177,6 @@ static void s_init_backlight_path(void) {
 				pfc = snprintf(s_backlight_dir_path, sizeof(s_backlight_dir_path), "/sys/class/backlight/%s/", ent->d_name);
 				if (pfc < 0 || pfc >= (int)sizeof(path)) {
 					closedir(dir);
-					s_sysinfo.is_backlight = false;
 					return;
 				}
 				found_prio = 1;
@@ -200,7 +184,7 @@ static void s_init_backlight_path(void) {
 		}
 	}
 	closedir(dir);
-	s_sysinfo.is_backlight = (found_prio == 0);
+	s_sysinfo.is_backlight = (found_prio != 0);
 	return;
 }
 
@@ -255,11 +239,13 @@ static void s_update_mem_usage(void) {
 		}
 	}
 
-	s_sysinfo.mem_usage = (int)(100 * mem_available / mem_total);
+	s_sysinfo.mem_usage = (int)(100 - 100 * mem_available / mem_total);
 	fclose(f);
 }
 
 static void s_update_cpu_temp(void) {
+	if (!s_sysinfo.is_temp_sensor)
+		return;
 	FILE* f = fopen(s_temp_sensor_path, "r");
 	if (!f)
 		return;
@@ -271,6 +257,8 @@ static void s_update_cpu_temp(void) {
 }
 
 static void s_update_battery_pct(void) {
+	if (!s_sysinfo.is_bat)
+		return;
 	char path[128];
 	int pfc = snprintf(path, sizeof(path), "%scapacity", s_battery_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(path))
@@ -285,6 +273,8 @@ static void s_update_battery_pct(void) {
 }
 
 static void s_update_battery_status(void) {
+	if (!s_sysinfo.is_bat)
+		return;
 	char path[128];
 	int pfc = snprintf(path, sizeof(path), "%sstatus", s_battery_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(path))
@@ -305,6 +295,8 @@ static void s_update_battery_status(void) {
 }
 
 static void s_update_brightness(void) {
+	if (!s_sysinfo.is_backlight)
+		return;
 	char brightness_path[128];
 	int pfc = snprintf(brightness_path, sizeof(brightness_path), "%sbrightness", s_backlight_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(brightness_path))
@@ -334,6 +326,10 @@ static void s_update_brightness(void) {
 
 static void s_update_audio(void) {
 	FILE* f = popen("wpctl get-volume @DEFAULT_SINK@", "r");
+	if (!f) {
+		s_sysinfo.volume_pct = -1;
+		return;
+	}
 
 	char mute[32];
 	float vol;
@@ -342,6 +338,10 @@ static void s_update_audio(void) {
 	pclose(f);
 
 	f = popen("wpctl inspect @DEFAULT_SINK@ | grep alsa.card_name", "r");
+	if (!f) {
+		s_sysinfo.audio_sink_name[0] = '\0';
+		return;
+	}
 	if (fscanf(f, "%*[^=]= \"%31[^\"]", s_sysinfo.audio_sink_name) != 1)
 		s_sysinfo.audio_sink_name[0] = '\0';
 	pclose(f);
@@ -683,18 +683,21 @@ config_register_fd: {
 // Custom commands
 const void* get_proc_arg(const char* name) {
 	if (strcmp(name, "run") == 0) {
-		static const char* bemenu[] = {"bemenu-run", "-C", "-i", "-p", ">", "-T", //
-									   "-B",		 NULL,						  // 7
-									   "-l",		 NULL,						  // 9
-									   "--bdr",		 NULL,						  // 11
-									   "--nf",		 NULL,						  // 13
-									   "--nb",		 NULL,						  // 15
-									   "--hf",		 NULL,						  // 17
-									   "--hb",		 NULL,						  // 19
-									   "--tf",		 NULL,						  // 21
-									   "--tb",		 NULL,						  // 23
-									   "--af",		 NULL,						  // 25
-									   "--ab",		 NULL,						  // 27
+		static const char* bemenu[] = {"bemenu-run", "-C",
+									   "-i",		 "-p",
+									   ">",			 "-T", //
+									   "-B",		 NULL, // 7
+									   "-l",		 NULL, // 9
+									   "--bdr",		 NULL, // 11
+									   "--nf",		 NULL, // 13
+									   "--nb",		 NULL, // 15
+									   "--hf",		 NULL, // 17
+									   "--hb",		 NULL, // 19
+									   "--tf",		 NULL, // 21
+									   "--tb",		 NULL, // 23
+									   "--af",		 NULL, // 25
+									   "--ab",		 NULL, // 27
+									   "--fn",		 "DejaVu Sans Mono 10",
 									   NULL};
 		static char border_buffer[3];
 		static char lines_buffer[3];
