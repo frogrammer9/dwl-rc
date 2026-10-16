@@ -7,10 +7,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libudev.h>
+#include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/inotify.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // ==================== META HELPERS ====================
@@ -25,18 +28,32 @@ static sysinfo_t s_sysinfo;
 
 // colors isn't here because it was to baked in for me to want to deal with it
 // TODO perhaps it would be nice to clean it up someday
-typedef struct {
+static struct {
+	bool manage_bg;
 	int bemenu_border;
 	int bemenu_lines;
 	uint32_t bemenu_color_border;
 	uint32_t bemenu_color_fg[4]; // normal, alt, selected, title
 	uint32_t bemenu_color_bg[4]; // normal, alt, selected, title
-} config_t;
-static config_t s_config;
+} s_config;
 
 uint32_t colors[3][3];
 
-static char s_temp_sensor_path[128];
+bool s_is_bg_tracked = false;
+
+static struct {
+	int config;
+	char* config_arg;
+	int bg;
+} s_inotify_wds;
+
+static struct {
+	struct wl_event_source* wes;
+	int pipe_fd;
+} s_audio_monitor;
+
+static int s_inotify_fd = 0;
+static char s_temp_sensor_path[PATH_MAX];
 static void s_init_temp_sensor(void) {
 	DIR* dir = opendir("/sys/class/hwmon");
 	s_sysinfo.is_temp_sensor = false;
@@ -48,7 +65,7 @@ static void s_init_temp_sensor(void) {
 	while ((ent = readdir(dir)) != NULL) {
 		if (ent->d_name[0] == '.')
 			continue;
-		char path[128];
+		char path[PATH_MAX];
 		int pfc = snprintf(path, sizeof(path), "/sys/class/hwmon/%s/name", ent->d_name);
 		if (pfc < 0 || pfc >= (int)sizeof(path)) {
 			closedir(dir);
@@ -78,7 +95,7 @@ static void s_init_temp_sensor(void) {
 	return;
 }
 
-static char s_battery_dir_path[128]; // it has / at the end (eg: /sys/class/power_supply/BAT0/)
+static char s_battery_dir_path[PATH_MAX]; // it has / at the end (eg: /sys/class/power_supply/BAT0/)
 static void s_init_battery_path(void) {
 	DIR* dir = opendir("/sys/class/power_supply");
 	s_sysinfo.is_bat = false;
@@ -90,25 +107,26 @@ static void s_init_battery_path(void) {
 		if (ent->d_name[0] == '.')
 			continue;
 
-		char path[128];
+		char path[PATH_MAX];
 		int pfc = snprintf(path, sizeof(path), "/sys/class/power_supply/%s/type", ent->d_name);
 		if (pfc < 0 || pfc >= (int)sizeof(path)) {
-			closedir(dir);
-			return;
+			continue;
+		}
+		if (strstr(ent->d_name, "BAT") != ent->d_name) {
+			continue;
 		}
 		char val[32];
 		FILE* f = fopen(path, "r");
 		if (!f) {
-			closedir(dir);
-			return;
+			continue;
 		}
 		fgets(val, sizeof(val), f);
 		fclose(f);
 		if (strncmp(val, "Battery", 7) == 0) {
 			pfc = snprintf(s_battery_dir_path, sizeof(s_battery_dir_path), "/sys/class/power_supply/%s/", ent->d_name);
-			closedir(dir);
 			if (pfc < 0 || pfc >= (int)sizeof(path))
-				return;
+				continue;
+			closedir(dir);
 			s_sysinfo.is_bat = true;
 			return;
 		}
@@ -117,7 +135,7 @@ static void s_init_battery_path(void) {
 	return;
 }
 
-static char s_backlight_dir_path[128]; // It has '/' at the end;
+static char s_backlight_dir_path[PATH_MAX]; // It has '/' at the end;
 static void s_init_backlight_path(void) {
 	DIR* dir = opendir("/sys/class/backlight");
 	s_sysinfo.is_backlight = false;
@@ -130,7 +148,7 @@ static void s_init_backlight_path(void) {
 		if (ent->d_name[0] == '.')
 			continue;
 
-		char path[128];
+		char path[PATH_MAX];
 
 		int pfc = snprintf(path, sizeof(path), "/sys/class/backlight/%s/type", ent->d_name);
 		if (pfc < 0 || pfc >= (int)sizeof(path)) {
@@ -209,13 +227,13 @@ static void s_update_cpu_load(void) {
 	uint64_t guest_nice;
 	fscanf(f, "cpu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal,
 		   &guest, &guest_nice);
-	uint64_t total = user + nice + system + idle + iowait + irq + softirq + steal + guest + guest_nice;
+	uint64_t total = user + nice + system + idle + iowait + irq + softirq + steal;
 	idle = idle + iowait;
 
 	uint64_t total_delta = total - old_total;
 	uint64_t idle_delta = idle - old_idle;
-
-	s_sysinfo.cpu_load = 100 * (total_delta - idle_delta) / total_delta;
+	if (total_delta != 0)
+		s_sysinfo.cpu_load = 100 * (total_delta - idle_delta) / total_delta;
 
 	old_total = total;
 	old_idle = idle;
@@ -259,7 +277,7 @@ static void s_update_cpu_temp(void) {
 static void s_update_battery_pct(void) {
 	if (!s_sysinfo.is_bat)
 		return;
-	char path[128];
+	char path[PATH_MAX];
 	int pfc = snprintf(path, sizeof(path), "%scapacity", s_battery_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(path))
 		return;
@@ -275,7 +293,7 @@ static void s_update_battery_pct(void) {
 static void s_update_battery_status(void) {
 	if (!s_sysinfo.is_bat)
 		return;
-	char path[128];
+	char path[PATH_MAX];
 	int pfc = snprintf(path, sizeof(path), "%sstatus", s_battery_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(path))
 		return;
@@ -297,11 +315,11 @@ static void s_update_battery_status(void) {
 static void s_update_brightness(void) {
 	if (!s_sysinfo.is_backlight)
 		return;
-	char brightness_path[128];
+	char brightness_path[PATH_MAX];
 	int pfc = snprintf(brightness_path, sizeof(brightness_path), "%sbrightness", s_backlight_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(brightness_path))
 		return;
-	char max_brightness_path[128];
+	char max_brightness_path[PATH_MAX];
 	pfc = snprintf(max_brightness_path, sizeof(max_brightness_path), "%smax_brightness", s_backlight_dir_path);
 	if (pfc < 0 || pfc >= (int)sizeof(brightness_path))
 		return;
@@ -321,7 +339,8 @@ static void s_update_brightness(void) {
 	fscanf(f, "%d", &max_brightness);
 	fclose(f);
 
-	s_sysinfo.backlight_pct = 100 * brightness / max_brightness;
+	if (max_brightness != 0)
+		s_sysinfo.backlight_pct = 100 * brightness / max_brightness;
 }
 
 static void s_update_audio(void) {
@@ -333,7 +352,10 @@ static void s_update_audio(void) {
 
 	char mute[32];
 	float vol;
-	s_sysinfo.is_audio_muted = (fscanf(f, "Volume: %f [%s]\n", &vol, mute) == 2);
+	int vol_read_rv = fscanf(f, "Volume: %f [%31s]\n", &vol, mute);
+	s_sysinfo.is_audio_muted = vol_read_rv == 2;
+	if (vol_read_rv < 1)
+		vol = 0;
 	s_sysinfo.volume_pct = (int)(vol * 100.f);
 	pclose(f);
 
@@ -358,9 +380,12 @@ static void s_update_network(DBusConnection* conn) {
 	char val[32];
 	fgets(val, sizeof(val), f);
 	s_sysinfo.is_internet_connected = (strncmp(val, "full", 4) == 0);
-	if (!s_sysinfo.is_internet_connected)
-		return;
 	pclose(f);
+	if (!s_sysinfo.is_internet_connected) {
+		s_sysinfo.is_internet_wireless = false;
+		s_sysinfo.wifi_ssid[0] = '\0';
+		return;
+	}
 
 	f = popen("nmcli -t -f TYPE,STATE,CONNECTION device", "r");
 	if (!f) {
@@ -375,6 +400,8 @@ static void s_update_network(DBusConnection* conn) {
 		char* type = strtok(line, ":");
 		char* state = strtok(NULL, ":");
 		char* name = strtok(NULL, "\n");
+		if (!type || !state || !name)
+			continue;
 
 		if (strncmp(state, "connected", 9) == 0) {
 			if (strncmp(type, "wifi", 4) == 0) {
@@ -409,6 +436,7 @@ static void s_config_set_default(void) {
 	colors[SchemeUrg][1] = 0;		   // #000000
 	colors[SchemeUrg][2] = 0x770000ff; // #770000
 
+	s_config.manage_bg = true;
 	s_config.bemenu_border = 0;
 	s_config.bemenu_lines = 0;
 	s_config.bemenu_color_border = 0x285577; // #285577
@@ -422,10 +450,73 @@ static void s_config_set_default(void) {
 	s_config.bemenu_color_bg[3] = 0x222222;	 // #222222
 }
 
-static void s_update_config(const char* dirpath) {
+static void s_close_bg_inotify(void) {
+	if (!s_is_bg_tracked)
+		return;
+	inotify_rm_watch(s_inotify_fd, s_inotify_wds.bg);
+	s_inotify_wds.bg = 0;
+	s_is_bg_tracked = false;
+}
+
+static void s_update_bg(bool should_just_kill) {
+	static pid_t s_last_pid = -1;
+	if (should_just_kill) {
+		if (s_last_pid > 0)
+			kill(s_last_pid, SIGTERM);
+		s_last_pid = -1;
+		return;
+	}
+	if (!s_config.manage_bg) {
+		s_close_bg_inotify();
+		if (s_last_pid > 0)
+			kill(s_last_pid, SIGTERM);
+		s_last_pid = -1;
+		return;
+	}
+	pid_t new_bg_pid = 0;
+	if ((new_bg_pid = fork()) == 0) {
+		const char* home = getenv("HOME");
+		if (!home)
+			_exit(1);
+		char path[PATH_MAX];
+		snprintf(path, sizeof(path), "%s/Pictures/wallpaper", home);
+		{ // Check if $HOME/Pictures/wallpaper is a file
+			struct stat st;
+			if (!(stat(path, &st) == 0 && S_ISREG(st.st_mode)))
+				_exit(1);
+		}
+		execlp("wbg", "wbg", "-s", path, NULL);
+	} else {
+		if (s_last_pid > 0)
+			kill(s_last_pid, SIGTERM);
+		s_last_pid = new_bg_pid;
+	}
+}
+
+static void s_try_register_bg_inotify(void) {
+	if (!s_config.manage_bg || s_is_bg_tracked)
+		return;
+	char path[PATH_MAX];
+	const char* home = getenv("HOME");
+	if (!home)
+		return;
+	snprintf(path, sizeof(path), "%s/Pictures", home);
+	{ // Check if $HOME/Pictures is a directory
+		struct stat st;
+		if (!(stat(path, &st) == 0 && S_ISDIR(st.st_mode)))
+			return;
+	}
+
+	s_update_bg(false);
+	uint32_t mask = IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE | IN_DELETE_SELF | IN_MOVE_SELF | IN_DELETE | IN_MOVED_FROM;
+	s_inotify_wds.bg = inotify_add_watch(s_inotify_fd, path, mask);
+	s_is_bg_tracked = s_inotify_wds.bg != -1;
+}
+
+static void s_update_config(void) {
 	s_config_set_default();
-	char path[128];
-	int pfc = snprintf(path, sizeof(path), "%s/config", dirpath);
+	char path[PATH_MAX];
+	int pfc = snprintf(path, sizeof(path), "%s/config", s_inotify_wds.config_arg);
 	if (pfc < 0 || pfc >= (int)sizeof(path))
 		die("snprintf failed: path buffer too small");
 	FILE* f = fopen(path, "r");
@@ -442,6 +533,7 @@ static void s_update_config(const char* dirpath) {
 	while (getline(&buffer, &n, f) > 0) {
 		uint32_t cols[4];
 		int bemenu = 0;
+		char yn_str[4];
 		if (sscanf(buffer, "color_normal: #%6x #%6x #%6x\n", &cols[0], &cols[1], &cols[2]) == 3) {
 			for (int i = 0; i < 3; ++i)
 				colors[SchemeNorm][i] = (cols[i] << 8) | 0xff;
@@ -463,6 +555,10 @@ static void s_update_config(const char* dirpath) {
 				s_config.bemenu_color_bg[i] = cols[i] & 0xffffff;
 		} else if (sscanf(buffer, "bemenu_color_border: #%6x", &cols[0]) == 1) {
 			s_config.bemenu_color_border = cols[0] & 0xffffff;
+		} else if (sscanf(buffer, "manage_bg: %3s", yn_str) == 1) {
+			s_config.manage_bg = false;
+			s_config.manage_bg = strcmp(yn_str, "yes") == 0;
+			s_update_bg(false);
 		}
 	}
 	free(buffer);
@@ -478,6 +574,32 @@ static redraw_callback s_redraw_all_cb;
 static struct udev* udev;
 static struct udev_monitor* udev_mon;
 
+static int s_inotify_callback(int fd, uint32_t mask, void* data) {
+	char buf[4096];
+	ssize_t len = read(fd, buf, sizeof(buf));
+
+	for (char* ptr = buf; ptr < buf + len;) {
+		struct inotify_event* ev = (struct inotify_event*)ptr;
+
+		if (ev->wd == s_inotify_wds.config && ev->len && strcmp(ev->name, "config") == 0) {
+			s_update_config();
+			s_redraw_all_cb();
+		} else if (ev->wd == s_inotify_wds.bg && ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF)) {
+			s_update_bg(true);
+			s_close_bg_inotify();
+		} else if (ev->wd == s_inotify_wds.bg && ev->len && strcmp(ev->name, "wallpaper") == 0) {
+			if ((ev->mask & (IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE))) {
+				s_update_bg(false);
+			} else if ((ev->mask & (IN_DELETE | IN_MOVED_FROM))) {
+				s_update_bg(true);
+			}
+		}
+
+		ptr += sizeof(struct inotify_event) + ev->len;
+	}
+	return 0;
+}
+
 static int s_timer_update_callback(void* data) {
 	s_update_cpu_load();
 	s_update_cpu_temp();
@@ -485,6 +607,8 @@ static int s_timer_update_callback(void* data) {
 	s_update_battery_pct();
 
 	s_redraw_bar_cb();
+
+	s_try_register_bg_inotify();
 
 	wl_event_source_timer_update(s_timer, *(int*)data);
 
@@ -513,14 +637,17 @@ static int s_audio_callback(int fd, uint32_t mask, void* data) {
 	ssize_t len = 0;
 	bool update = false;
 	for (;;) {
-		len = read(fd, buffer, sizeof(buffer));
+		len = read(fd, buffer, sizeof(buffer) - 1);
 		if (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
 			break;
 		else if (len == -1)
 			return -1;
-		if (len == 0)
-			return -1;
-
+		buffer[len] = '\0';
+		if (len == 0) {
+			wl_event_source_remove(s_audio_monitor.wes);
+			close(s_audio_monitor.pipe_fd);
+			break;
+		}
 		if (strstr(buffer, "sink") || strstr(buffer, "source") || strstr(buffer, "server"))
 			update = true;
 	}
@@ -545,26 +672,15 @@ static int s_udev_callback(int fd, uint32_t mask, void* data) {
 	return 0;
 }
 
-static int s_config_change_callback(int fd, unsigned int mask, void* data) {
-	const char* path = (const char*)data;
-	char buf[4096];
-
-	ssize_t len = read(fd, buf, sizeof(buf));
-
-	for (char* ptr = buf; ptr < buf + len;) {
-		struct inotify_event* ev = (struct inotify_event*)ptr;
-
-		if (ev->len && strcmp(ev->name, "config") == 0) {
-			s_update_config(path);
-			s_redraw_all_cb();
-		}
-
-		ptr += sizeof(struct inotify_event) + ev->len;
-	}
-	return 0;
-}
-
 // ==================== PUBLIC ====================
+
+void custom_init(struct wl_event_loop* loop) {
+	s_inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+	if (s_inotify_fd < 0)
+		die("Failed to init inotify");
+
+	wl_event_loop_add_fd(loop, s_inotify_fd, WL_EVENT_READABLE, s_inotify_callback, NULL);
+}
 
 sysinfo_t get_system_info(void) { return s_sysinfo; }
 
@@ -597,6 +713,8 @@ void system_info_init_event_loop(int timeout, struct wl_event_loop* loop, redraw
 	// Register audio subscription
 	int pa_pipefd[2];
 	pipe(pa_pipefd);
+	fcntl(pa_pipefd[0], F_SETFD, FD_CLOEXEC);
+	fcntl(pa_pipefd[1], F_SETFD, FD_CLOEXEC);
 	pid_t pa_sub_pid = fork();
 	if (pa_sub_pid == 0) {
 		dup2(pa_pipefd[1], STDOUT_FILENO);
@@ -607,10 +725,10 @@ void system_info_init_event_loop(int timeout, struct wl_event_loop* loop, redraw
 	}
 
 	close(pa_pipefd[1]);
-	int pa_fd = pa_pipefd[0];
-	fcntl(pa_fd, F_SETFL, fcntl(pa_fd, F_GETFL) | O_NONBLOCK);
+	s_audio_monitor.pipe_fd = pa_pipefd[0];
+	fcntl(s_audio_monitor.pipe_fd, F_SETFL, fcntl(s_audio_monitor.pipe_fd, F_GETFL) | O_NONBLOCK);
 	s_update_audio();
-	wl_event_loop_add_fd(loop, pa_fd, WL_EVENT_READABLE, s_audio_callback, NULL);
+	s_audio_monitor.wes = wl_event_loop_add_fd(loop, s_audio_monitor.pipe_fd, WL_EVENT_READABLE, s_audio_callback, NULL);
 
 	// Dbus subscription for NetworkManager
 	DBusError dbus_err;
@@ -631,18 +749,18 @@ void system_info_init_event_loop(int timeout, struct wl_event_loop* loop, redraw
 					   "member='PropertiesChanged'",
 					   &dbus_err);
 	dbus_connection_flush(dbus_conn);
+	if (dbus_error_is_set(&dbus_err))
+		die("System info dbus connection creation failed");
+	dbus_error_free(&dbus_err);
 }
 
 // Dynamic colors
-void config_init_event_loop(struct wl_event_loop* loop, redraw_callback cb) {
+void config_init_event_loop(redraw_callback cb) {
 	s_redraw_all_cb = cb;
-	int fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-	if (fd < 0)
-		die("Failed to init inotify");
 
-	static char path[128];
+	static char path[PATH_MAX];
 	const char* xdg_conf = getenv("XDG_CONFIG_HOME");
-	if (xdg_conf) {
+	if (xdg_conf && strlen(xdg_conf) > 0) {
 		int pfc = snprintf(path, sizeof(path), "%s/dwl-rc", xdg_conf);
 		if (pfc < 0 || pfc >= (int)sizeof(path))
 			die("snprintf failed: path buffer too small");
@@ -668,16 +786,13 @@ void config_init_event_loop(struct wl_event_loop* loop, redraw_callback cb) {
 	die("Ur env is stuoid");
 
 config_register_fd: {
-	int wd = inotify_add_watch(fd, path, IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE);
+	s_inotify_wds.config = inotify_add_watch(s_inotify_fd, path, IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE);
+	// TODO: Check for error?
 	s_config_set_default();
-	if (wd < 0) {
-		close(fd);
-		return;
-	}
-	s_update_config(path);
-
-	wl_event_loop_add_fd(loop, fd, WL_EVENT_READABLE, s_config_change_callback, (void*)path);
+	s_inotify_wds.config_arg = path;
+	s_update_config();
 }
+	s_try_register_bg_inotify();
 }
 
 // Custom commands
@@ -712,15 +827,15 @@ const void* get_proc_arg(const char* name) {
 		static char title_bg_color_buffer[8];
 		snprintf(border_buffer, sizeof(border_buffer), "%d", s_config.bemenu_border);
 		snprintf(lines_buffer, sizeof(lines_buffer), "%d", s_config.bemenu_lines);
-		snprintf(border_color_buffer, sizeof(border_color_buffer), "#%x", s_config.bemenu_color_border);
-		snprintf(normal_fg_color_buffer, sizeof(normal_fg_color_buffer), "#%x", s_config.bemenu_color_fg[0]);
-		snprintf(normal_bg_color_buffer, sizeof(normal_bg_color_buffer), "#%x", s_config.bemenu_color_bg[0]);
-		snprintf(alt_fg_color_buffer, sizeof(alt_fg_color_buffer), "#%x", s_config.bemenu_color_fg[1]);
-		snprintf(alt_bg_color_buffer, sizeof(alt_bg_color_buffer), "#%x", s_config.bemenu_color_bg[1]);
-		snprintf(highlight_fg_color_buffer, sizeof(highlight_fg_color_buffer), "#%x", s_config.bemenu_color_fg[2]);
-		snprintf(highlight_bg_color_buffer, sizeof(highlight_bg_color_buffer), "#%x", s_config.bemenu_color_bg[2]);
-		snprintf(title_fg_color_buffer, sizeof(title_fg_color_buffer), "#%x", s_config.bemenu_color_fg[3]);
-		snprintf(title_bg_color_buffer, sizeof(title_bg_color_buffer), "#%x", s_config.bemenu_color_bg[3]);
+		snprintf(border_color_buffer, sizeof(border_color_buffer), "#%06x", s_config.bemenu_color_border);
+		snprintf(normal_fg_color_buffer, sizeof(normal_fg_color_buffer), "#%06x", s_config.bemenu_color_fg[0]);
+		snprintf(normal_bg_color_buffer, sizeof(normal_bg_color_buffer), "#%06x", s_config.bemenu_color_bg[0]);
+		snprintf(alt_fg_color_buffer, sizeof(alt_fg_color_buffer), "#%06x", s_config.bemenu_color_fg[1]);
+		snprintf(alt_bg_color_buffer, sizeof(alt_bg_color_buffer), "#%06x", s_config.bemenu_color_bg[1]);
+		snprintf(highlight_fg_color_buffer, sizeof(highlight_fg_color_buffer), "#%06x", s_config.bemenu_color_fg[2]);
+		snprintf(highlight_bg_color_buffer, sizeof(highlight_bg_color_buffer), "#%06x", s_config.bemenu_color_bg[2]);
+		snprintf(title_fg_color_buffer, sizeof(title_fg_color_buffer), "#%06x", s_config.bemenu_color_fg[3]);
+		snprintf(title_bg_color_buffer, sizeof(title_bg_color_buffer), "#%06x", s_config.bemenu_color_bg[3]);
 		bemenu[7] = border_buffer;
 		bemenu[9] = lines_buffer;
 		bemenu[11] = border_color_buffer;

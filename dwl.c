@@ -2677,8 +2677,9 @@ void setup(void) {
 		watcher_start(&watcher, bus_conn, event_loop);
 
 	/* Custom */
+	custom_init(wl_display_get_event_loop(dpy));
 	system_info_init_event_loop(5000, wl_display_get_event_loop(dpy), drawbars);
-	config_init_event_loop(wl_display_get_event_loop(dpy), redraw_all);
+	config_init_event_loop(redraw_all);
 
 	/* Make sure XWayland clients don't connect to the parent X server,
 	 * e.g when running in the x11 backend or the wayland backend and the

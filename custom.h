@@ -28,13 +28,15 @@ typedef struct {
 
 typedef void (*redraw_callback)(void);
 
+void custom_init(struct wl_event_loop* loop);
+
 sysinfo_t get_system_info(void);
 void system_info_init_event_loop(int timeout, struct wl_event_loop* loop, redraw_callback cb);
 
 enum { SchemeNorm, SchemeSel, SchemeUrg };
 extern uint32_t colors[3][3];
 
-void config_init_event_loop(struct wl_event_loop* loop, redraw_callback cb);
+void config_init_event_loop(redraw_callback cb);
 
 const void* get_proc_arg(const char* name);
 
